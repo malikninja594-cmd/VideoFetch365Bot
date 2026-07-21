@@ -98,11 +98,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏳ Downloading...")
 
         ydl_opts = {
-    "format": "best",
+    "format": "bv*+ba/b",
+    "merge_output_format": "mp4",
     "outtmpl": "%(title)s.%(ext)s",
-    "cookiefile": "cookies.txt",
     "quiet": True,
-     }
+        }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
