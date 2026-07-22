@@ -1,129 +1,60 @@
-import os
-import re
-import tempfile
-from pathlib import Path
-
-import requests
+import telebot
 import yt_dlp
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+import os
 
-# Put your new bot token here or set BOT_TOKEN in Pydroid environment
-BOT_TOKEN = os.getenv("8926384344:AAHodT2wOaUfOdGxQWYoSxKRky-C1M2R5BA")
+# Apna Telegram Bot Token yahan dalein (BotFather se milega)
+BOT_TOKEN = '8926384344:AAHodT2wOaUfOdGxQWYoSxKRky-C1M2R5BA'
+bot = telebot.TeleBot("8926384344:AAHodT2wOaUfOdGxQWYoSxKRky-C1M2R5BA")
 
-# Optional Terabox cookie.
-# Some Terabox links work better with a valid cookie.
-TERABOX_COOKIE = os.getenv("TERABOX_COOKIE", "")
-
-DOWNLOAD_ROOT = Path(tempfile.gettempdir()) / "tg_downloader_bot"
-DOWNLOAD_ROOT.mkdir(parents=True, exist_ok=True)
-
-
-def is_terabox_url(url: str) -> bool:
-    url = url.lower()
-    return any(domain in url for domain in ("terabox", "1024tera", "teraboxapp", "terabox.app"))
-
-
-def safe_filename(name: str, default: str = "download") -> str:
-    name = name.strip() or default
-    name = re.sub(r'[\\/*?:"<>|]', "_", name)
-    return name[:180]
-
-
-async def send_downloaded_file(update: Update, file_path: Path, as_video: bool = False):
-    with file_path.open("rb") as fp:
-        if as_video and file_path.suffix.lower() in {".mp4", ".mkv", ".webm", ".mov"}:
-            await update.message.reply_video(fp)
-        else:
-            await update.message.reply_document(fp)
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Send me a YouTube, Instagram Reel/Post, or Terabox URL."
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    welcome_text = (
+        "👋 Hello! Main ek Video Downloader Bot hoon.\n\n"
+        "Mujhe **YouTube** ya **Instagram** ka video/reel link bhejein, "
+        "aur main use download karke aapko bhej dunga."
     )
+    bot.reply_to(message, welcome_text)
 
-
-async def download_from_terabox(update: Update, url: str):
-    # Package docs: from TeraboxDL import TeraboxDL
-    from TeraboxDL import TeraboxDL
-
-    await update.message.reply_text("📦 Terabox link detect hua. Info nikal raha hoon...")
-
-    terabox = TeraboxDL(TERABOX_COOKIE)
-    file_info = terabox.get_file_info(url, direct_url=True)
-
-    if not isinstance(file_info, dict) or "error" in file_info:
-        err = file_info.get("error", "Terabox file info not found") if isinstance(file_info, dict) else "Terabox error"
-        await update.message.reply_text(f"❌ Terabox error:\n{err}")
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    url = message.text.strip()
+    
+    # Check karein ki message mein URL hai ya nahi
+    if not url.startswith("http://") and not url.startswith("https://"):
+        bot.reply_to(message, "⚠️ Kripya ek valid YouTube ya Instagram ka link bhejein.")
         return
 
-    download_url = file_info.get("download_link")
-    file_name = safe_filename(file_info.get("file_name", "terabox_file"))
-    if not download_url:
-        await update.message.reply_text("❌ Terabox download link nahi mila.")
-        return
-
-    suffix = Path(file_name).suffix or ".mp4"
-    temp_path = DOWNLOAD_ROOT / f"{file_name if file_name.endswith(suffix) else file_name + suffix}"
-
-    await update.message.reply_text("⏳ Terabox file download ho rahi hai...")
-
-    with requests.get(download_url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        with temp_path.open("wb") as f:
-            for chunk in r.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    f.write(chunk)
-
-    await update.message.reply_text("📤 Sending file...")
-    await send_downloaded_file(update, temp_path, as_video=True)
+    bot.reply_to(message, "⏳ Video download ho rahi hai, kripya thoda intezaar karein...")
 
     try:
-        temp_path.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = (update.message.text or "").strip()
-    if not url:
-        return
-
-    try:
-        if is_terabox_url(url):
-            await download_from_terabox(update, url)
-            return
-
-        await update.message.reply_text("⏳ Downloading...")
-
+        # yt-dlp ki settings
         ydl_opts = {
-    "format": "bv*+ba/b",
-    "merge_output_format": "mp4",
-    "outtmpl": "%(title)s.%(ext)s",
-    "quiet": True,
+            'format': 'best', # Best quality download karega
+            'outtmpl': 'downloaded_video_%(id)s.%(ext)s', # File ka naam
+            'max_filesize': 50000000, # Telegram bot ki limit 50MB hoti hai
+            'noplaylist': True,
+            'quiet': True
         }
 
+        # Video download karna
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            filename = Path(ydl.prepare_filename(info))
+            filename = ydl.prepare_filename(info)
 
-        await update.message.reply_text("📤 Sending file...")
-        await send_downloaded_file(update, filename, as_video=True)
+        # Telegram par video send karna
+        with open(filename, 'rb') as video_file:
+            bot.send_video(message.chat.id, video_file, caption="🎬 Yeh lijiye aapki video!")
 
-        try:
-            filename.unlink(missing_ok=True)
-        except Exception:
-            pass
+        # Send hone ke baad local file ko delete kar dena taaki space bache
+        os.remove(filename)
 
+    except yt_dlp.utils.DownloadError as e:
+        bot.reply_to(message, "❌ Download fail ho gaya. Ho sakta hai video **50MB se badi** ho, private ho, ya link invalid ho.")
+        print(f"Download Error: {e}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
+        bot.reply_to(message, "❌ Ek error aagaya. Kripya baad mein try karein.")
+        print(f"Error: {e}")
 
-
-app = Application.builder().token("8926384344:AAHodT2wOaUfOdGxQWYoSxKRky-C1M2R5BA").build()
-
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-
-print("Bot Running...")
-app.run_polling()
+# Bot ko lagatar chalane ke liye
+print("Bot is running...")
+bot.infinity_polling()
